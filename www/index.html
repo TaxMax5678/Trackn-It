@@ -1024,6 +1024,36 @@ function scheduleView(){
   return html;
 }
 
+/* ---------- DSATM preset ---------- */
+const DSATM = [
+  ['09:30','10:25','class'], ['10:25','11:20','class'], ['11:20','11:35','break'],
+  ['11:35','12:30','class'], ['12:30','13:25','class'], ['13:25','14:15','break'],
+  ['14:15','15:10','class'], ['15:10','16:05','class'], ['16:05','17:00','class']
+];
+/* add future colleges here: { id, name, periods: [[start, end, 'class'|'break'], ...] } */
+const COLLEGES = [{ id: 'dsatm', name: 'DSATM', periods: DSATM }];
+function applyPreset(c){
+  const sig = list => list.map(p => `${p.start}-${p.end}-${p.kind === 'break' ? 'break' : 'class'}`).join('|');
+  const old = sortedPeriods();
+  if (sig(old) === sig(c.periods.map(([start, end, kind]) => ({ start, end, kind })))){
+    toast(`${c.name} times already applied`); return false;
+  }
+  const next = c.periods.map(([start, end, kind]) => ({ id: uid(), start, end, kind, label: kind === 'break' ? 'Break' : '' }));
+  const oldClass = old.filter(p => p.kind !== 'break'), newClass = next.filter(p => p.kind !== 'break');
+  const live = state.slots.filter(s => subj(s.subjectId));
+  const gone = [];
+  state.slots.forEach(s => {
+    const i = oldClass.findIndex(p => p.id === s.periodId);
+    if (subj(s.subjectId) && i >= 0 && i < newClass.length) s.periodId = newClass[i].id; else gone.push(s.id);
+  });
+  const dropped = live.filter(s => gone.includes(s.id)).length;
+  dropSlots(s => gone.includes(s.id));
+  state.periods = next;
+  save(); render();
+  toast(!live.length ? `${c.name} schedule added` : dropped ? `${c.name} applied · ${dropped} class${dropped === 1 ? '' : 'es'} didn't fit and were removed` : `${c.name} applied · your classes were carried over`);
+  return true;
+}
+
 /* ---------- sheets ---------- */
 function openSheet(inner){
   const root = document.getElementById('sheet-root');
@@ -1145,13 +1175,27 @@ function periodSheet(id, kindArg){
 function timesSheet(){
   const ps = sortedPeriods();
   const sh = openSheet(`<div class="head" style="align-items:center;margin-bottom:14px"><div><h3 style="margin:0">Class times</h3><div class="hint" style="margin:2px 0 0">Classes and breaks</div></div>
-    <button class="btn save" id="f-add" style="padding:10px 16px;border:0;background:linear-gradient(135deg,#7c8cff,#a78bfa);color:#fff">＋ Slot</button></div>
+    <div style="display:flex;gap:8px"><button class="btn" id="f-colleges" style="padding:10px 14px">🏫 Colleges</button>
+    <button class="btn save" id="f-add" style="padding:10px 16px;border:0;background:linear-gradient(135deg,#7c8cff,#a78bfa);color:#fff">＋ Slot</button></div></div>
     ${ps.length ? ps.map(p => `<button class="trow" data-p="${p.id}"><span class="k">${p.kind==='break'?'☕':'🕘'}</span>
       <span class="grow"><span class="name" style="display:block">${p.kind==='break'?esc(p.label||'Break'):'Class'}</span><span class="time" style="display:block">${fmt(p.start)} – ${fmt(p.end)}</span></span>
       <span style="color:var(--muted)">›</span></button>`).join('') : '<div class="empty" style="margin-bottom:12px">No times yet.</div>'}
     `);
   sh.addEventListener('click', e => { const b = e.target.closest('[data-p]'); if (b) periodSheet(b.dataset.p); });
   sh.querySelector('#f-add').onclick = () => periodSheet(null, 'class');
+  sh.querySelector('#f-colleges').onclick = collegesSheet;
+}
+
+function collegesSheet(){
+  const sh = openSheet(`<h3>College timetables</h3><div class="hint">Ready-made class times for specific colleges. Your assigned classes carry over in order (1st class stays 1st class).</div>
+    ${COLLEGES.map(c => `<button class="trow" data-college="${c.id}"><span class="k">🏫</span><span class="grow"><span class="name" style="display:block">${esc(c.name)}</span><span class="time" style="display:block">${c.periods.filter(p => p[2] === 'class').length} periods · ${fmt(c.periods[0][0])} – ${fmt(c.periods[c.periods.length - 1][1])}</span></span><span style="color:var(--muted)">›</span></button>`).join('')}
+    <div class="foot"><button class="btn" id="f-back">Back</button></div>`);
+  sh.addEventListener('click', e => {
+    const b = e.target.closest('[data-college]'); if (!b) return;
+    const c = COLLEGES.find(x => x.id === b.dataset.college);
+    if (c && applyPreset(c)) closeSheet();
+  });
+  sh.querySelector('#f-back').onclick = timesSheet;
 }
 
 function assignSheet(periodId){
